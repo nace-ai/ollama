@@ -119,6 +119,16 @@ Nimble and Tev are scored by reading the next-token logits of the letters `A` th
 
 A pointer-head model, such as a model whose family is `pointer-head`, scores hidden states at a decision marker and at each option marker. Its attention graph is not causal: state tokens attend to every state token, and each question branch attends only to the state and to itself. Converting only its backbone to GGUF and sending it through the letter-token path loads a file, then returns probabilities for the wrong tokens. Ollama refuses that fallback.
 
-llama.cpp writes that mask into the KQ input of the existing Qwen3 attention graph when `llama_set_pointer_segments` is set for the decode. That call does not load safetensors or `head.pt`. Until a runner invokes it, this endpoint still does not score the model itself.
+For Drex DLM, use the `edlm` architecture and converter from the `edlm` branch of [nace-ai/llama.cpp](https://github.com/nace-ai/llama.cpp). Its GGUF contains both the diffusion backbone and the pointer head. Build this Ollama fork's native runtime against that checkout as described in the repository README, then import the GGUF with a Modelfile:
 
-To serve such a model through this endpoint today, run its pointer-head server on a loopback address and set `OLLAMA_POINTER_RUNNER` to that URL. Ollama forwards the original request and returns the runner's response. It does not letter-score the model. Native loading of pointer-head checkpoints is not part of this release.
+```dockerfile
+FROM /absolute/path/to/drex-dlm.gguf
+CAPABILITY decision
+PARAMETER num_ctx 16384
+```
+
+Run `ollama create drex-dlm -f Modelfile` against the fork's running server, then post the original `state` and `questions` request to `/v1/systemone` with `"model": "drex-dlm"`. Ollama launches the custom llama-server and forwards its response, including native validation errors and score legend arrays.
+
+The recommended context is 16,384 tokens. For the full 32,768-token window, change `num_ctx` to `32768`, recreate the model, and start Ollama with `SYSTEMONE_CONTEXT=32768`. The fork gives eDLM one slot and sets both native batch limits to that slot's configured context, so each decision encode fits in a single pass. Smaller positive `num_ctx` values are also respected; set `SYSTEMONE_CONTEXT` to the same value to align the native input caps.
+
+An external pointer-head server remains available through `OLLAMA_POINTER_RUNNER`, which must be a loopback URL. It is used for non-GGUF pointer-head models or when the local native server returns 404 for `/v1/systemone`. Ollama never falls back to letter-token scoring for a pointer-head model.

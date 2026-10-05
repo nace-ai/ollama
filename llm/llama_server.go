@@ -375,7 +375,7 @@ func startLlamaServer(launch llamaServerLaunchConfig, out io.Writer) (cmd *exec.
 		launch.numParallel = 1
 	}
 	ctxTokens := launch.opts.NumCtx * launch.numParallel
-	if launch.modelArch == "edlm" && ctxTokens < 16384 {
+	if launch.modelArch == "edlm" && ctxTokens <= 0 {
 		ctxTokens = 16384
 	}
 	params := []string{
@@ -431,7 +431,7 @@ func startLlamaServer(launch llamaServerLaunchConfig, out io.Writer) (cmd *exec.
 	params = appendMainGPUArgs(params, launch.opts)
 
 	if launch.modelArch == "edlm" {
-		params = append(params, edlmServerArgs()...)
+		params = append(params, edlmServerArgs(ctxTokens)...)
 	} else {
 		params = appendContextShiftArgs(params, launch.opts, launch.config.ContextShift)
 	}
@@ -445,7 +445,13 @@ func startLlamaServer(launch llamaServerLaunchConfig, out io.Writer) (cmd *exec.
 		cmd.Stderr = out
 	}
 	cmd.SysProcAttr = LlamaServerSysProcAttr
-	SetupLlamaServerCommandEnv(cmd, exe, launch.gpuLibs, launch.extraEnvsForStart())
+	extraEnvs := launch.extraEnvsForStart()
+	if launch.modelArch == "edlm" && runtime.GOOS == "darwin" {
+		// Metal's tensor matmul path produces incorrect long-context eDLM decisions.
+		extraEnvs = cloneStringMap(extraEnvs)
+		extraEnvs["GGML_METAL_TENSOR_DISABLE"] = "1"
+	}
+	SetupLlamaServerCommandEnv(cmd, exe, launch.gpuLibs, extraEnvs)
 
 	slog.Info("starting llama-server", "cmd", cmd)
 	slog.Debug("subprocess", "", filteredEnv(cmd.Env))
@@ -588,8 +594,9 @@ func embeddingBatchSize(opts api.Options, numParallel int) int {
 
 // edlmServerArgs is the llama-server contract for the edlm fork.
 // One packed encode, per-token embeddings, no warmup decode.
-func edlmServerArgs() []string {
-	return []string{"--embedding", "--pooling", "none", "-b", "16384", "-ub", "16384", "--no-warmup"}
+func edlmServerArgs(contextSize int) []string {
+	batchSize := strconv.Itoa(contextSize)
+	return []string{"--embedding", "--pooling", "none", "-b", batchSize, "-ub", batchSize, "--no-warmup"}
 }
 
 func appendLlamaServerLogArgs(params []string) []string {

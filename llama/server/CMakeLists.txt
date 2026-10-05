@@ -115,9 +115,15 @@ include(FetchContent)
 file(READ "${CMAKE_CURRENT_SOURCE_DIR}/../../LLAMA_CPP_VERSION" LLAMA_CPP_GIT_TAG)
 string(STRIP "${LLAMA_CPP_GIT_TAG}" LLAMA_CPP_GIT_TAG)
 
-# Allow local source override via environment variable (like OLLAMA_MLX_SOURCE)
-if(DEFINED ENV{OLLAMA_LLAMA_CPP_SOURCE})
+# Persist the local source override so automatic reconfiguration also leaves
+# the developer's tree unpatched when the environment variable is no longer set.
+set(OLLAMA_LLAMA_CPP_SOURCE "" CACHE PATH "Local llama.cpp source tree (skip compat patches)")
+if(DEFINED ENV{OLLAMA_LLAMA_CPP_SOURCE} AND NOT "$ENV{OLLAMA_LLAMA_CPP_SOURCE}" STREQUAL "")
     get_filename_component(_src "$ENV{OLLAMA_LLAMA_CPP_SOURCE}" ABSOLUTE BASE_DIR ${CMAKE_CURRENT_SOURCE_DIR})
+    set(OLLAMA_LLAMA_CPP_SOURCE "${_src}" CACHE PATH "Local llama.cpp source tree (skip compat patches)" FORCE)
+endif()
+if(NOT OLLAMA_LLAMA_CPP_SOURCE STREQUAL "")
+    get_filename_component(_src "${OLLAMA_LLAMA_CPP_SOURCE}" ABSOLUTE BASE_DIR ${CMAKE_CURRENT_SOURCE_DIR})
     set(FETCHCONTENT_SOURCE_DIR_LLAMA_CPP "${_src}" CACHE PATH "" FORCE)
     message(STATUS "Using local llama.cpp source: ${_src}")
 endif()
@@ -138,7 +144,7 @@ option(OLLAMA_LLAMA_CPP_SKIP_COMPAT_PATCH
 set(_ollama_link_compat_sources OFF)
 if(OLLAMA_LLAMA_CPP_SKIP_COMPAT_PATCH)
     set(_ollama_link_compat_sources ON)
-elseif(NOT DEFINED ENV{OLLAMA_LLAMA_CPP_SOURCE})
+elseif(OLLAMA_LLAMA_CPP_SOURCE STREQUAL "")
     set(_ollama_link_compat_sources ON)
     if(DEFINED FETCHCONTENT_SOURCE_DIR_LLAMA_CPP AND NOT FETCHCONTENT_SOURCE_DIR_LLAMA_CPP STREQUAL "")
         get_filename_component(_llama_cpp_source_override

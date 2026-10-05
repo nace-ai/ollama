@@ -1954,11 +1954,134 @@ func TestAppendBatchArgs(t *testing.T) {
 	}
 }
 
-func TestEdlmServerArgs(t *testing.T) {
-	got := edlmServerArgs()
-	want := []string{"--embedding", "--pooling", "none", "-b", "16384", "-ub", "16384", "--no-warmup"}
-	if !slices.Equal(got, want) {
-		t.Fatalf("edlmServerArgs = %v, want %v", got, want)
+func TestStartEdlmServerContext(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("test uses a POSIX shell helper")
+	}
+	// Exercise the actual launch path without starting a model or GPU runtime.
+	exe := filepath.Join(t.TempDir(), "llama-server")
+	if err := os.WriteFile(exe, []byte("#!/bin/sh\nexit 0\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("OLLAMA_LLAMA_SERVER", exe)
+	for _, tt := range []struct {
+		name    string
+		numCtx  int
+		wantCtx string
+	}{
+		{"default", 0, "16384"},
+		{"unset negative", -1, "16384"},
+		{"recommended", 16384, "16384"},
+		{"full window", 32768, "32768"},
+		{"smaller window", 4096, "4096"},
+		{"minimum configured window", 4, "4"},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			opts := api.DefaultOptions()
+			opts.NumCtx = tt.numCtx
+			opts.NumBatch = 512 // A generation batch must not split a decision encode.
+			cmd, _, err := startLlamaServer(llamaServerLaunchConfig{
+				modelPath:   "unused.gguf",
+				modelArch:   "edlm",
+				opts:        opts,
+				numParallel: 4, // eDLM must still launch a single slot.
+				kvCacheType: "q8_0",
+			}, io.Discard)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := cmd.Wait(); err != nil {
+				t.Fatal(err)
+			}
+			for flag, want := range map[string]string{
+				"-c": tt.wantCtx, "-b": tt.wantCtx, "-ub": tt.wantCtx,
+				"-np": "1", "--pooling": "none",
+			} {
+				var values []string
+				for i, arg := range cmd.Args {
+					if arg == flag && i+1 < len(cmd.Args) {
+						values = append(values, cmd.Args[i+1])
+					}
+				}
+				if !slices.Equal(values, []string{want}) {
+					t.Errorf("%s values = %v, want [%s]; args: %v", flag, values, want, cmd.Args)
+				}
+			}
+			for _, flag := range []string{"--embedding", "--no-warmup"} {
+				if !slices.Contains(cmd.Args, flag) {
+					t.Errorf("missing %s: %v", flag, cmd.Args)
+				}
+			}
+			for _, flag := range []string{"--cache-type-k", "--cache-type-v"} {
+				if slices.Contains(cmd.Args, flag) {
+					t.Errorf("unexpected causal cache flag %s: %v", flag, cmd.Args)
+				}
+			}
+		})
+	}
+}
+
+func TestStartLlamaServerEdlmMetalEnvironment(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("test uses a POSIX shell helper")
+	}
+	// Read the environment inside the launched child without loading a GPU runtime.
+	exe := filepath.Join(t.TempDir(), "llama-server")
+	if err := os.WriteFile(exe, []byte("#!/bin/sh\nprintf '%s|%s' \"${GGML_METAL_TENSOR_DISABLE-unset}\" \"$EDLM_TEST_KEEP\"\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("OLLAMA_LLAMA_SERVER", exe)
+	for _, tt := range []struct {
+		name      string
+		arch      string
+		inherited string
+		extra     string
+		want      string
+	}{
+		{"edlm unset", "edlm", "", "", "unset"},
+		{"edlm inherited zero", "edlm", "0", "", "0"},
+		{"edlm launch zero", "edlm", "inherited", "0", "0"},
+		{"other model unset", "llama", "", "", "unset"},
+		{"other model inherited", "llama", "0", "", "0"},
+		{"other model launch override", "llama", "inherited", "0", "0"},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			const key = "GGML_METAL_TENSOR_DISABLE"
+			t.Setenv(key, tt.inherited)
+			if tt.inherited == "" {
+				if err := os.Unsetenv(key); err != nil {
+					t.Fatal(err)
+				}
+			}
+			extraEnvs := map[string]string{"EDLM_TEST_KEEP": "kept"}
+			if tt.extra != "" {
+				extraEnvs[key] = tt.extra
+			}
+			var output bytes.Buffer
+			cmd, _, err := startLlamaServer(llamaServerLaunchConfig{
+				modelPath: "unused.gguf", modelArch: tt.arch,
+				opts: api.DefaultOptions(), numParallel: 1, extraEnvs: extraEnvs,
+			}, &output)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := cmd.Wait(); err != nil {
+				t.Fatal(err)
+			}
+			want := tt.want
+			if tt.arch == "edlm" && runtime.GOOS == "darwin" {
+				want = "1"
+			}
+			if got := output.String(); got != want+"|kept" {
+				t.Errorf("child environment = %q, want %q", got, want+"|kept")
+			}
+			if got, present := extraEnvs[key]; got != tt.extra || present != (tt.extra != "") {
+				t.Errorf("launch environment was mutated: %v", extraEnvs)
+			}
+			if got, present := os.LookupEnv(key); got != tt.inherited || present != (tt.inherited != "") {
+				t.Errorf("parent environment was mutated: value=%q, present=%v", got, present)
+			}
+		})
 	}
 }
 
