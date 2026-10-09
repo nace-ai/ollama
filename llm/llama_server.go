@@ -174,6 +174,7 @@ type llamaServerRunner struct {
 type llamaServerLaunchConfig struct {
 	modelPath            string
 	modelArch            string
+	pointerHead          bool // a causal model that carries a pointer head, such as Drex v1.5 on qwen35
 	draftType            string
 	projectors           []string
 	mmprojMemory         uint64
@@ -371,12 +372,15 @@ func startLlamaServer(launch llamaServerLaunchConfig, out io.Writer) (cmd *exec.
 	// Build CLI flags — minimal set, let llama-server auto-detect the rest.
 	// edlm scores one packed encode on a single context. A second slot or a
 	// smaller batch makes llama-server reject the request.
+	// A causal pointer-head model keeps the question state in one slot and scores each question in a second.
 	if launch.modelArch == "edlm" {
 		launch.numParallel = 1
+	} else if launch.pointerHead {
+		launch.numParallel = 2
 	}
 	ctxTokens := launch.opts.NumCtx * launch.numParallel
-	if launch.modelArch == "edlm" && ctxTokens <= 0 {
-		ctxTokens = 16384
+	if launch.isPointerHead() && ctxTokens <= 0 {
+		ctxTokens = 16384 * launch.numParallel
 	}
 	params := []string{
 		"--model", launch.modelPath,
@@ -388,7 +392,7 @@ func startLlamaServer(launch llamaServerLaunchConfig, out io.Writer) (cmd *exec.
 		"-np", strconv.Itoa(launch.numParallel),
 	}
 	params = appendLlamaServerLogArgs(params)
-	if launch.modelArch != "edlm" {
+	if !launch.isPointerHead() {
 		params = appendJinjaArgs(params, launch.config)
 		params = appendMMProjArgs(params, launch)
 		params = appendDraftArgs(params, launch.draftType, launch.config.DraftModelPath, launch.opts)
@@ -403,11 +407,11 @@ func startLlamaServer(launch llamaServerLaunchConfig, out io.Writer) (cmd *exec.
 	params = appendLoadModeArgs(params, launch.opts, launch.gpus)
 
 	// KV cache type. edlm has no cache; a cache flag is the wrong server.
-	if launch.modelArch != "edlm" && launch.kvCacheType != "" {
+	if launch.modelArch != "edlm" && !launch.pointerHead && launch.kvCacheType != "" {
 		params = append(params, "--cache-type-k", launch.kvCacheType, "--cache-type-v", launch.kvCacheType)
 	}
 
-	if launch.modelArch != "edlm" {
+	if !launch.isPointerHead() {
 		params = appendFlashAttentionArgs(params, launch.gpus)
 		params = appendBatchArgs(params, launch.opts, launch.embedding, launch.numParallel)
 	}
@@ -432,6 +436,8 @@ func startLlamaServer(launch llamaServerLaunchConfig, out io.Writer) (cmd *exec.
 
 	if launch.modelArch == "edlm" {
 		params = append(params, edlmServerArgs(ctxTokens)...)
+	} else if launch.pointerHead {
+		params = append(params, causalPointerServerArgs(ctxTokens/launch.numParallel)...)
 	} else {
 		params = appendContextShiftArgs(params, launch.opts, launch.config.ContextShift)
 	}
@@ -446,8 +452,8 @@ func startLlamaServer(launch llamaServerLaunchConfig, out io.Writer) (cmd *exec.
 	}
 	cmd.SysProcAttr = LlamaServerSysProcAttr
 	extraEnvs := launch.extraEnvsForStart()
-	if launch.modelArch == "edlm" && runtime.GOOS == "darwin" {
-		// Metal's tensor matmul path produces incorrect long-context eDLM decisions.
+	if launch.isPointerHead() && runtime.GOOS == "darwin" {
+		// Metal's tensor matmul path produces incorrect long-context pointer-head decisions.
 		extraEnvs = cloneStringMap(extraEnvs)
 		extraEnvs["GGML_METAL_TENSOR_DISABLE"] = "1"
 	}
@@ -590,6 +596,17 @@ func embeddingBatchSize(opts api.Options, numParallel int) int {
 		batchSize = min(batchSize, opts.NumCtx*max(numParallel, 1))
 	}
 	return batchSize
+}
+
+// isPointerHead reports whether llama-server scores this model through its pointer head.
+func (c llamaServerLaunchConfig) isPointerHead() bool {
+	return c.modelArch == "edlm" || c.pointerHead
+}
+
+// causalPointerServerArgs is the llama-server contract for a causal model with a pointer head.
+// One row, state plus one question branch, must fit one batch. Larger rows are split by -ub.
+func causalPointerServerArgs(contextSize int) []string {
+	return []string{"--embedding", "--pooling", "none", "-b", strconv.Itoa(contextSize), "-ub", strconv.Itoa(min(contextSize, 2048)), "--no-warmup"}
 }
 
 // edlmServerArgs is the llama-server contract for the edlm fork.
@@ -961,6 +978,7 @@ func NewLlamaServerRunner(
 	launch := llamaServerLaunchConfig{
 		modelPath:    splitModel.modelPath,
 		modelArch:    arch,
+		pointerHead:  arch == "qwen35" && len(f.Tensors().Items("pointer.")) > 0,
 		draftType:    draftType,
 		projectors:   slices.Clone(splitModel.projectors),
 		mmprojMemory: mmprojMemory,

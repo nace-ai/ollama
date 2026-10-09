@@ -6,7 +6,7 @@
 
 # Ollama
 
-This tree serves [Drex DLM](https://huggingface.co/nace-ai/drex-dlm). `POST /v1/systemone` is forwarded to `llama-server` from [nace-ai/llama.cpp](https://github.com/nace-ai/llama.cpp), branch `edlm`.
+This tree serves [Drex DLM](https://huggingface.co/nace-ai/drex-dlm) and [Drex v1.5](https://huggingface.co/nace-ai/drex-v1.5). `POST /v1/systemone` is forwarded to `llama-server` from [nace-ai/llama.cpp](https://github.com/nace-ai/llama.cpp), branch `drex-v1.5`. A GGUF of Drex v1.5 is a `qwen35` model with `pointer.*` tensors. Ollama detects them at `ollama create` and marks the model as `decision`, not `completion`.
 
 ```bash
 export OLLAMA_LLAMA_CPP_SOURCE=/path/to/llama.cpp

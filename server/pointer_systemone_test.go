@@ -57,6 +57,12 @@ func TestPointerSystemOneNativeForwarding(t *testing.T) {
 			response: `{"answers":{"rating":{"type":"score","score":0.75,"legend":["low","high"],"probabilities":{"0":0.25,"1":0.75},"confidence":0.75}},"usage":{"input_tokens":12,"output_tokens":2}}`,
 		},
 		{
+			name:     "batch forwarded unchanged",
+			body:     `{"model":"pointer-test","requests":[{"state":"first","questions":{"q":{"type":"noul"}}},{"state":"second","questions":{"q":{"type":"noul"}}}]}`,
+			status:   http.StatusOK,
+			response: `{"model":"pointer-test","results":[{"answers":{"q":{"type":"noul","noul":0.25}}},{"answers":{"q":{"type":"noul","noul":0.75}}}]}`,
+		},
+		{
 			name:     "empty requests wrapper",
 			body:     `{"model":"pointer-test","state":"x","questions":{"q":{"type":"noul"}},"requests":[]}`,
 			status:   http.StatusBadRequest,

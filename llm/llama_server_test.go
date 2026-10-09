@@ -2021,6 +2021,66 @@ func TestStartEdlmServerContext(t *testing.T) {
 	}
 }
 
+func TestStartCausalPointerServerArgs(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("test uses a POSIX shell helper")
+	}
+	exe := filepath.Join(t.TempDir(), "llama-server")
+	if err := os.WriteFile(exe, []byte("#!/bin/sh\nexit 0\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("OLLAMA_LLAMA_SERVER", exe)
+	for _, tt := range []struct {
+		name    string
+		numCtx  int
+		wantCtx string
+		wantRow string
+		wantUb  string
+	}{
+		{"default", 0, "32768", "16384", "2048"},
+		{"small window", 1024, "2048", "1024", "1024"},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			opts := api.DefaultOptions()
+			opts.NumCtx = tt.numCtx
+			cmd, _, err := startLlamaServer(llamaServerLaunchConfig{
+				modelPath:   "unused.gguf",
+				modelArch:   "qwen35",
+				pointerHead: true,
+				opts:        opts,
+				numParallel: 1,
+				kvCacheType: "q8_0",
+			}, io.Discard)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := cmd.Wait(); err != nil {
+				t.Fatal(err)
+			}
+			// Two slots: one holds the state, one scores a question.
+			for flag, want := range map[string]string{
+				"-c": tt.wantCtx, "-b": tt.wantRow, "-ub": tt.wantUb,
+				"-np": "2", "--pooling": "none",
+			} {
+				var values []string
+				for i, arg := range cmd.Args {
+					if arg == flag && i+1 < len(cmd.Args) {
+						values = append(values, cmd.Args[i+1])
+					}
+				}
+				if !slices.Equal(values, []string{want}) {
+					t.Errorf("%s values = %v, want [%s]; args: %v", flag, values, want, cmd.Args)
+				}
+			}
+			for _, flag := range []string{"--embedding", "--no-warmup"} {
+				if !slices.Contains(cmd.Args, flag) {
+					t.Errorf("missing %s: %v", flag, cmd.Args)
+				}
+			}
+		})
+	}
+}
+
 func TestStartLlamaServerEdlmMetalEnvironment(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("test uses a POSIX shell helper")
