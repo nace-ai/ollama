@@ -174,7 +174,7 @@ type llamaServerRunner struct {
 type llamaServerLaunchConfig struct {
 	modelPath            string
 	modelArch            string
-	pointerHead          bool // a causal model that carries a pointer head, such as Drex v1.5 on qwen35
+	pointerHead          bool // a causal model that carries a pointer head, such as Drex v1.5 on qwen35 or Drex v2.0 on qwen35moe
 	draftType            string
 	projectors           []string
 	mmprojMemory         uint64
@@ -978,7 +978,7 @@ func NewLlamaServerRunner(
 	launch := llamaServerLaunchConfig{
 		modelPath:    splitModel.modelPath,
 		modelArch:    arch,
-		pointerHead:  arch == "qwen35" && len(f.Tensors().Items("pointer.")) > 0,
+		pointerHead:  (arch == "qwen35" || arch == "qwen35moe") && len(f.Tensors().Items("pointer.")) > 0,
 		draftType:    draftType,
 		projectors:   slices.Clone(splitModel.projectors),
 		mmprojMemory: mmprojMemory,

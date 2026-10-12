@@ -818,7 +818,7 @@ func createModel(ctx context.Context, r api.CreateRequest, name model.Name, base
 				if !slices.Contains(config.ModelFamilies, architecture) {
 					config.ModelFamilies = append(config.ModelFamilies, architecture)
 				}
-				if architecture == "qwen35" && len(layer.GGUF.TensorInfos("pointer.")) > 0 &&
+				if (architecture == "qwen35" || architecture == "qwen35moe") && len(layer.GGUF.TensorInfos("pointer.")) > 0 &&
 					!slices.Contains(config.ModelFamilies, decision.PointerHeadFamily) {
 					config.ModelFamilies = append(config.ModelFamilies, decision.PointerHeadFamily)
 				}
