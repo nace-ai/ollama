@@ -6,7 +6,7 @@
 
 # Ollama
 
-This tree serves [Drex DLM](https://huggingface.co/nace-ai/drex-dlm), [Drex v1.5](https://huggingface.co/nace-ai/drex-v1.5) and [Drex v2.0](https://huggingface.co/nace-ai/drex-v2.0). `POST /v1/systemone` is forwarded to `llama-server` from [nace-ai/llama.cpp](https://github.com/nace-ai/llama.cpp), branch `drex-v2.0`. A GGUF of Drex v1.5 is a `qwen35` model and one of Drex v2.0 is a `qwen35moe` model, both with `pointer.*` tensors. Ollama detects them at `ollama create` and marks the model as `decision`, not `completion`.
+This tree serves [Drex DLM](https://huggingface.co/nace-ai/drex-dlm), [Drex v1.5](https://huggingface.co/nace-ai/drex-v1.5) and [Drex v2.0](https://huggingface.co/nace-ai/drex-v2.0) and [Drex Max v1](https://huggingface.co/nace-ai/drex-max-v1). `POST /v1/systemone` is forwarded to `llama-server` from [nace-ai/llama.cpp](https://github.com/nace-ai/llama.cpp), branch `drex-max-v1` (it contains the v2.0 work). A GGUF of Drex v1.5 is a `qwen35` model and one of Drex v2.0 is a `qwen35moe` model, both with `pointer.*` tensors. A GGUF of Drex Max v1 is a non-causal `qwen35` model with a `pointer.readout` tensor; Ollama runs it with one slot and one batch as large as the context. Ollama detects them at `ollama create` and marks the model as `decision`, not `completion`.
 
 ```bash
 export OLLAMA_LLAMA_CPP_SOURCE=/path/to/llama.cpp

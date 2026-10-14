@@ -2081,6 +2081,45 @@ func TestStartCausalPointerServerArgs(t *testing.T) {
 	}
 }
 
+func TestStartReadoutHeadServerArgs(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("test uses a POSIX shell helper")
+	}
+	exe := filepath.Join(t.TempDir(), "llama-server")
+	if err := os.WriteFile(exe, []byte("#!/bin/sh\nexit 0\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("OLLAMA_LLAMA_SERVER", exe)
+	opts := api.DefaultOptions()
+	opts.NumCtx = 0
+	cmd, _, err := startLlamaServer(llamaServerLaunchConfig{
+		modelPath:   "unused.gguf",
+		modelArch:   "qwen35",
+		pointerHead: true,
+		readoutHead: true,
+		opts:        opts,
+		numParallel: 2,
+	}, io.Discard)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := cmd.Wait(); err != nil {
+		t.Fatal(err)
+	}
+	// One slot and one ubatch as large as the context, so a whole non-causal row fits.
+	for flag, want := range map[string]string{"-c": "16384", "-np": "1", "-b": "16384", "-ub": "16384", "--pooling": "none"} {
+		var values []string
+		for i, arg := range cmd.Args {
+			if arg == flag && i+1 < len(cmd.Args) {
+				values = append(values, cmd.Args[i+1])
+			}
+		}
+		if !slices.Equal(values, []string{want}) {
+			t.Errorf("%s values = %v, want [%s]; args: %v", flag, values, want, cmd.Args)
+		}
+	}
+}
+
 func TestStartLlamaServerEdlmMetalEnvironment(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("test uses a POSIX shell helper")

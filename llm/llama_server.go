@@ -174,6 +174,7 @@ type llamaServerRunner struct {
 type llamaServerLaunchConfig struct {
 	modelPath            string
 	modelArch            string
+	readoutHead          bool // the pointer head is a linear readout on a non-causal model, such as Drex Max on qwen35: one row per question, each decoded in a single ubatch
 	pointerHead          bool // a causal model that carries a pointer head, such as Drex v1.5 on qwen35 or Drex v2.0 on qwen35moe
 	draftType            string
 	projectors           []string
@@ -375,6 +376,8 @@ func startLlamaServer(launch llamaServerLaunchConfig, out io.Writer) (cmd *exec.
 	// A causal pointer-head model keeps the question state in one slot and scores each question in a second.
 	if launch.modelArch == "edlm" {
 		launch.numParallel = 1
+	} else if launch.readoutHead {
+		launch.numParallel = 1
 	} else if launch.pointerHead {
 		launch.numParallel = 2
 	}
@@ -435,6 +438,9 @@ func startLlamaServer(launch llamaServerLaunchConfig, out io.Writer) (cmd *exec.
 	params = appendMainGPUArgs(params, launch.opts)
 
 	if launch.modelArch == "edlm" {
+		params = append(params, edlmServerArgs(ctxTokens)...)
+	} else if launch.readoutHead {
+		// non-causal attention needs the whole row in one ubatch
 		params = append(params, edlmServerArgs(ctxTokens)...)
 	} else if launch.pointerHead {
 		params = append(params, causalPointerServerArgs(ctxTokens/launch.numParallel)...)
@@ -979,6 +985,7 @@ func NewLlamaServerRunner(
 		modelPath:    splitModel.modelPath,
 		modelArch:    arch,
 		pointerHead:  (arch == "qwen35" || arch == "qwen35moe") && len(f.Tensors().Items("pointer.")) > 0,
+		readoutHead:  arch == "qwen35" && len(f.Tensors().Items("pointer.readout")) > 0,
 		draftType:    draftType,
 		projectors:   slices.Clone(splitModel.projectors),
 		mmprojMemory: mmprojMemory,
